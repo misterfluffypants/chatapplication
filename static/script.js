@@ -1,31 +1,74 @@
-let username = "";
-let ws = null;
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse
+from typing import List
 
-document.getElementById("nameForm").addEventListener("submit", function (e) {
-    e.preventDefault();
-    username = document.getElementById("nameInput").value.trim();
-    if (!username) return;
+app = FastAPI()
 
-    document.getElementById("login").style.display = "none";
-    document.getElementById("chat").style.display = "flex";
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
-    ws = new WebSocket(`wss://${window.location.host}/ws`);
+html = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>Dark Telegram Style Chat</title>
+    <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+    <div class="container" id="login">
+        <h2>Enter your name</h2>
+        <form id="nameForm">
+            <input type="text" id="nameInput" placeholder="Your name" required />
+            <button type="submit">Join Chat</button>
+        </form>
+    </div>
 
-    ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        const msg = document.createElement("div");
-        msg.innerHTML = `<strong>${data.name}:</strong> ${data.message}`;
-        document.getElementById("messages").appendChild(msg);
-        document.getElementById("messages").scrollTop = document.getElementById("messages").scrollHeight;
-    };
-});
+    <div class="container" id="chat" style="display:none;">
+        <div id="messages" class="messages"></div>
+        <form id="chatForm">
+            <input
+                type="text"
+                id="messageInput"
+                placeholder="Type a message..."
+                autocomplete="off"
+                required
+            />
+        </form>
+    </div>
 
-document.getElementById("chatForm").addEventListener("submit", function (e) {
-    e.preventDefault();
-    const input = document.getElementById("messageInput");
-    const message = input.value.trim();
-    if (!message || !ws) return;
+    <script src="/static/script.js"></script>
+</body>
+</html>
+"""
 
-    ws.send(JSON.stringify({ name: username, message: message }));
-    input.value = "";
-});
+@app.get("/")
+async def get():
+    return HTMLResponse(html)
+
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: str):
+        for connection in self.active_connections:
+            await connection.send_text(message)
+
+manager = ConnectionManager()
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            await manager.broadcast(data)
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
